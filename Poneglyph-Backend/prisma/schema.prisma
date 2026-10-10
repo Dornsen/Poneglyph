@@ -1,0 +1,242 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- ENUMS ---
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum MemberRole {
+  OWNER
+  MODERATOR
+  MEMBER
+}
+
+enum Status {
+  ACTIVE
+  INACTIVE
+  DRAFT
+  ARCHIVED
+}
+
+enum LikeType {
+  LIKE
+  DISLIKE
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+}
+
+// --- MODELS ---
+
+model User {
+  id                  Int       @id @default(autoincrement())
+  login               String    @unique @db.VarChar(255)
+  password_hash       String    @db.VarChar(255)
+  full_name           String    @db.VarChar(255)
+  email               String    @unique @db.VarChar(255)
+  avatar_path         String?   @default("default_avatar.png") @db.VarChar(255)
+  rating              Int       @default(0)
+  role                Role      @default(USER)
+  created_at          DateTime  @default(now())
+
+  is_email_confirmed  Boolean   @default(false)
+  email_token         String?   @db.VarChar(255)
+  email_token_expires DateTime?
+  reset_token         String?   @db.VarChar(255)
+  reset_token_expires DateTime?
+
+  owned_communities   Community[]
+  memberships         CommunityMember[]
+  posts               Post[]
+  comments            Comment[]
+  post_likes          PostLike[]
+  comment_likes       CommentLike[]
+
+  @@map("users")
+}
+
+model GlobalCategory {
+  id          Int                       @id @default(autoincrement())
+  title       String                    @unique @db.VarChar(50)
+  description String?                   @db.Text
+  
+  communities CommunityGlobalCategory[]
+
+  @@map("global_categories")
+}
+
+model CommunityGlobalCategory {
+  community_id       Int
+  global_category_id Int
+
+  community       Community      @relation(fields: [community_id], references: [id], onDelete: Cascade)
+  global_category GlobalCategory @relation(fields: [global_category_id], references: [id], onDelete: Cascade)
+
+  @@id([community_id, global_category_id])
+  @@map("community_global_categories")
+}
+
+model Community {
+  id          Int      @id @default(autoincrement())
+  title       String   @unique @db.VarChar(100)
+  description String?  @db.Text
+  avatar_path String?  @default("default_community.png") @db.VarChar(255)
+  created_at  DateTime @default(now())
+
+  owner_id    Int
+  owner       User     @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+
+  members           CommunityMember[]
+  global_categories CommunityGlobalCategory[]
+  categories        CommunityLocalCategory[]
+  posts             Post[]
+
+  @@map("communities")
+}
+
+model CommunityMember {
+  user_id      Int
+  community_id Int
+  role         MemberRole @default(MEMBER)
+  joined_at    DateTime   @default(now())
+
+  user      User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  community Community @relation(fields: [community_id], references: [id], onDelete: Cascade)
+
+  @@id([user_id, community_id])
+  @@map("community_members")
+}
+
+// Local categories for posts within a community
+model CommunityLocalCategory {
+  id          Int     @id @default(autoincrement())
+  title       String  @db.VarChar(50)
+  description String? @db.Text
+
+  community_id Int
+  community    Community @relation(fields: [community_id], references: [id], onDelete: Cascade)
+
+  posts PostCategory[]
+
+  @@unique([community_id, title], name: "unique_community_category")
+  @@map("categories")
+}
+
+model Post {
+  id           Int      @id @default(autoincrement())
+  title        String   @db.VarChar(255)
+  content      String   @db.Text
+  publish_date DateTime @default(now())
+  status       Status   @default(ACTIVE)
+
+  author_id Int
+  author    User @relation(fields: [author_id], references: [id], onDelete: Cascade)
+
+  community_id Int
+  community    Community @relation(fields: [community_id], references: [id], onDelete: Cascade)
+
+  media      PostMedia[]
+  categories PostCategory[]
+  comments   Comment[]
+  likes      PostLike[]
+
+  @@index([publish_date])
+  @@map("posts")
+}
+
+model PostMedia {
+  id        Int       @id @default(autoincrement())
+  media_url String    @db.VarChar(255)
+  type      MediaType @default(IMAGE)
+  post_id   Int
+  post      Post      @relation(fields: [post_id], references: [id], onDelete: Cascade)
+
+  @@map("post_media")
+}
+
+model PostCategory {
+  post_id     Int
+  category_id Int
+
+  post     Post     @relation(fields: [post_id], references: [id], onDelete: Cascade)
+  category CommunityLocalCategory @relation(fields: [category_id], references: [id], onDelete: Cascade)
+
+  @@id([post_id, category_id])
+  @@map("post_categories")
+}
+
+model Comment {
+  id           Int      @id @default(autoincrement())
+  content      String   @db.Text
+  publish_date DateTime @default(now())
+  status       Status   @default(ACTIVE)
+
+  post_id Int
+  post    Post @relation(fields: [post_id], references: [id], onDelete: Cascade)
+
+  author_id Int
+  author    User @relation(fields: [author_id], references: [id], onDelete: Cascade)
+
+  parent_id Int?
+  parent    Comment?  @relation("CommentReplies", fields: [parent_id], references: [id], onDelete: Cascade)
+  replies   Comment[] @relation("CommentReplies")
+
+  media CommentMedia[]
+  likes CommentLike[]
+
+  @@index([publish_date])
+  @@map("comments")
+}
+
+model CommentMedia {
+  id         Int       @id @default(autoincrement())
+  media_url  String    @db.VarChar(255)
+  type       MediaType @default(IMAGE)
+  comment_id Int
+  comment    Comment   @relation(fields: [comment_id], references: [id], onDelete: Cascade)
+
+  @@map("comment_media")
+}
+
+model PostLike {
+  id         Int      @id @default(autoincrement())
+  type       LikeType
+  created_at DateTime @default(now())
+
+  author_id Int
+  author    User @relation(fields: [author_id], references: [id], onDelete: Cascade)
+
+  post_id Int
+  post    Post @relation(fields: [post_id], references: [id], onDelete: Cascade)
+
+  @@unique([author_id, post_id])
+  @@index([post_id, type])
+  @@map("post_likes")
+}
+
+model CommentLike {
+  id         Int      @id @default(autoincrement())
+  type       LikeType
+  created_at DateTime @default(now())
+
+  author_id Int
+  author    User @relation(fields: [author_id], references: [id], onDelete: Cascade)
+
+  comment_id Int
+  comment    Comment @relation(fields: [comment_id], references: [id], onDelete: Cascade)
+
+  @@unique([author_id, comment_id])
+  @@index([comment_id, type])
+  @@map("comment_likes")
+}
