@@ -1,24 +1,18 @@
 require('dotenv').config();
-const express = require('express');
-const path = require('path');
 
-const app = express();
-const PORT = process.env.PORT || 5000;
+const prisma = require('./config/db');
+const { loadConfig } = require('./config');
+const { createSmtpMailer } = require('./config/mailer');
+const createApp = require('./app');
 
-app.use(express.json()); 
-app.use(express.urlencoded({ extended: true }));
+const config = loadConfig();
+if (!config.jwt_secret) {
+    console.error('JWT_SECRET is not set. Copy .env.example to .env and fill it in');
+    process.exit(1);
+}
 
-app.get('/api/ping', (req, res) => {
-    res.json({ message: 'USOF API is alive! 🚀' });
-});
+const app = createApp({ prisma, mailer: createSmtpMailer(config), config });
 
-app.use('/storage', express.static(path.join(__dirname, 'storage')));
-app.use('/api/auth', require('./routes/AuthRoutes'));
-app.use('/api/users', require('./routes/userRoutes'));
-app.use('/api/communities', require('./routes/communityRoutes'));
-app.use('/api/categories', require('./routes/categoriesRoutes'));
-app.get('/api/all-global-categories', require('./controllers/categoriesController').getAllGlobalCategoriesAsync);
-
-app.listen(PORT, () => {
-    console.log(`Server is running: http://localhost:${PORT}`);
+app.listen(config.port, () => {
+    console.log(`Server is running: http://localhost:${config.port}`);
 });

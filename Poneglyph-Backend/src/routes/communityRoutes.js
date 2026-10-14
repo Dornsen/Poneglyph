@@ -1,39 +1,62 @@
 const express = require('express');
-const router = express.Router();
-const authMiddleware = require('../middlewares/authMiddleware');
-const uploadMiddleware = require('../middlewares/uploadMiddleware');
-const postController = require('../controllers/postController');
-const categoriesController = require('../controllers/categoriesController');
-const commentsController = require('../controllers/commentsController');
-const communitiesController = require('../controllers/communitiesController');
 
-router.get('/', communitiesController.getAllCommunitiesAsync);
-router.post('/', authMiddleware, communitiesController.createCommunityAsync);
-router.get('/:community_id', communitiesController.getCommunityByIdAsync);
-router.patch('/:community_id', authMiddleware, communitiesController.updateCommunityAsync);
-router.delete('/:community_id', authMiddleware, communitiesController.deleteCommunityAsync);
-router.post('/:community_id/join', authMiddleware, communitiesController.joinCommunityAsync);
-router.delete('/:community_id/leave', authMiddleware, communitiesController.leaveCommunityAsync);
+// Mounted at /api/communities. Posts, categories and comments are nested routers
+function createCommunityRoutes({
+    communityController, categoryController, postController, commentController,
+    reportController, categoryRequestController, auth, upload
+}) {
+    const router = express.Router();
 
-router.get('/:community_id/posts', postController.getAllPostsAsync);
-router.get('/:community_id/posts/:post_id', postController.getPostByIDAsync);
-router.get('/:community_id/posts/:post_id/comments', postController.getPostCommentsAsync);
-router.post('/:community_id/posts/:post_id/comments', authMiddleware, uploadMiddleware.array('images', 5), postController.createCommentAsync);
-router.get('/:community_id/posts/:post_id/categories', postController.getPostCategoriesAsync);
-router.get('/:community_id/posts/:post_id/likes', postController.getPostLikesAsync);
-router.post('/:community_id/posts', authMiddleware, uploadMiddleware.array('media', 8), postController.createPostAsync);
-router.post('/:community_id/posts/:post_id/like', authMiddleware, postController.likePostAsync);
-router.patch('/:community_id/posts/:post_id', authMiddleware, uploadMiddleware.array('media', 8), postController.updatePostAsync);
-router.delete('/:community_id/posts/:post_id/like', authMiddleware, postController.deletePostLikeAsync);
-router.delete('/:community_id/posts/:post_id', authMiddleware, postController.deletePostAsync);
+    router.get('/', auth.optional, communityController.getAllCommunitiesAsync);
+    router.post('/', auth.required, communityController.createCommunityAsync);
+    router.get('/:community_id', auth.optional, communityController.getCommunityByIdAsync);
+    router.patch('/:community_id', auth.required, communityController.updateCommunityAsync);
+    router.patch('/:community_id/avatar', auth.required, upload.imageOnly.single('avatar'), communityController.uploadCommunityAvatarAsync);
+    router.delete('/:community_id', auth.required, communityController.deleteCommunityAsync);
 
-router.get('/:community_id/categories', categoriesController.getAllCommunityCategoriesAsync);
+    router.post('/:community_id/join', auth.required, communityController.joinCommunityAsync);
+    router.delete('/:community_id/leave', auth.required, communityController.leaveCommunityAsync);
 
-router.get('/:community_id/posts/:post_id/comments/:comment_id', commentsController.getCommentByIdAsync);
-router.get('/:community_id/posts/:post_id/comments/:comment_id/like', commentsController.getCommentLikesAsync);
-router.post('/:community_id/posts/:post_id/comments/:comment_id/like', authMiddleware, commentsController.createCommentLikeAsync);
-router.patch('/:community_id/posts/:post_id/comments/:comment_id', authMiddleware, commentsController.updateCommentAsync);
-router.delete('/:community_id/posts/:post_id/comments/:comment_id', authMiddleware, commentsController.deleteCommentAsync);
-router.delete('/:community_id/posts/:post_id/comments/:comment_id/like', authMiddleware, commentsController.deleteCommentLikeAsync);
+    router.get('/:community_id/members', communityController.getCommunityMembersAsync);
+    router.patch('/:community_id/members/:user_id', auth.required, communityController.setMemberRoleAsync);
+    router.delete('/:community_id/members/:user_id', auth.required, communityController.removeMemberAsync);
+    router.post('/:community_id/transfer-ownership', auth.required, communityController.transferOwnershipAsync);
+    router.put('/:community_id/global-categories', auth.required, communityController.setGlobalCategoriesAsync);
 
-module.exports = router;
+    // Local categories of the community
+    router.get('/:community_id/categories', categoryController.getAllCommunityCategoriesAsync);
+    router.post('/:community_id/categories', auth.required, categoryController.createLocalCategoryAsync);
+    router.get('/:community_id/categories/:category_id', categoryController.getCommunityCategoryByIdAsync);
+    router.patch('/:community_id/categories/:category_id', auth.required, categoryController.updateLocalCategoryAsync);
+    router.delete('/:community_id/categories/:category_id', auth.required, categoryController.deleteLocalCategoryAsync);
+    router.get('/:community_id/categories/:category_id/posts', auth.optional, postController.getPostsByCategoryAsync);
+    router.post('/:community_id/category-requests', auth.required, categoryRequestController.requestLocalCategoryAsync);
+
+    // Posts
+    router.get('/:community_id/posts', auth.optional, postController.getCommunityPostsAsync);
+    router.post('/:community_id/posts', auth.required, upload.media.array('media', 8), postController.createPostAsync);
+    router.get('/:community_id/posts/:post_id', auth.optional, postController.getPostByIDAsync);
+    router.patch('/:community_id/posts/:post_id', auth.required, upload.media.array('media', 8), postController.updatePostAsync);
+    router.delete('/:community_id/posts/:post_id', auth.required, postController.deletePostAsync);
+    router.get('/:community_id/posts/:post_id/categories', auth.optional, postController.getPostCategoriesAsync);
+    router.get('/:community_id/posts/:post_id/likes', auth.optional, postController.getPostLikesAsync);
+    router.post('/:community_id/posts/:post_id/like', auth.required, postController.likePostAsync);
+    router.delete('/:community_id/posts/:post_id/like', auth.required, postController.deletePostLikeAsync);
+    router.post('/:community_id/posts/:post_id/report', auth.required, reportController.reportPostAsync);
+
+    // Comments
+    const comments = '/:community_id/posts/:post_id/comments';
+    router.get(comments, auth.optional, commentController.getPostCommentsAsync);
+    router.post(comments, auth.required, upload.media.array('media', 5), commentController.createCommentAsync);
+    router.get(`${comments}/:comment_id`, auth.optional, commentController.getCommentByIdAsync);
+    router.patch(`${comments}/:comment_id`, auth.required, commentController.updateCommentAsync);
+    router.delete(`${comments}/:comment_id`, auth.required, commentController.deleteCommentAsync);
+    router.get(`${comments}/:comment_id/likes`, auth.optional, commentController.getCommentLikesAsync);
+    router.post(`${comments}/:comment_id/like`, auth.required, commentController.createCommentLikeAsync);
+    router.delete(`${comments}/:comment_id/like`, auth.required, commentController.deleteCommentLikeAsync);
+    router.post(`${comments}/:comment_id/report`, auth.required, reportController.reportCommentAsync);
+
+    return router;
+}
+
+module.exports = createCommunityRoutes;

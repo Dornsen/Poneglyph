@@ -1,45 +1,67 @@
 const jwt = require('jsonwebtoken');
-const prisma = require('../config/db');
+const { UnauthorizedError, ForbiddenError } = require('../utils/errors');
+const { parsePositiveInteger } = require('../utils/parse');
 
-const authMiddleware = async (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ message: 'Access denied. No token provided.' });
-    }
-
-    const token = authHeader.split(' ')[1];
-
-    try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        
-        const userIdRaw = decoded.id ?? decoded.userId;
-        const userIdText = userIdRaw === undefined ? '' : String(userIdRaw).trim();
-        const userId = /^\d+$/.test(userIdText) ? Number(userIdText) : null;
-
-        if (!Number.isSafeInteger(userId) || userId <= 0) {
-            return res.status(401).json({ message: 'Invalid token payload: missing user ID' });
+function createAuthMiddleware({ prisma, config }) {
+    async function authenticateAsync(req) {
+        const authHeader = req.headers.authorization;
+        if (!authHeader) {
+            return null;
+        }
+        if (!authHeader.startsWith('Bearer ')) {
+            throw new UnauthorizedError('Invalid authorization header');
         }
 
-        const role = decoded.role ?? null;
+        let decoded;
+        try {
+            decoded = jwt.verify(authHeader.slice('Bearer '.length).trim(), config.jwt_secret);
+        } catch (error) {
+            throw new UnauthorizedError('Invalid or expired token');
+        }
+
+        const user_id = parsePositiveInteger(decoded.id);
+        if (user_id === null) {
+            throw new UnauthorizedError('Invalid token payload');
+        }
+
         const user = await prisma.user.findUnique({
-            where: { id: userId },
-            select: { role: true }
+            where: { id: user_id },
+            select: { id: true, role: true, token_version: true, is_suspended: true, suspended_reason: true }
         });
 
-        if (!user || user.role !== role) {
-            return res.status(401).json({ message: 'Invalid token payload: role mismatch' });
+        if (!user || user.role !== decoded.role || user.token_version !== decoded.ver) {
+            throw new UnauthorizedError('Token is no longer valid');
         }
 
-        req.user = {
-            ...decoded,
-            id: userId,
-            userId: userId
+        return {
+            id: user.id,
+            role: user.role,
+            is_suspended: user.is_suspended,
+            suspended_reason: user.suspended_reason
         };
-        
-        next();
-    } catch (error) {
-        return res.status(403).json({ message: 'Invalid or expired token.' });
     }
-};
 
-module.exports = authMiddleware;
+    const required = async (req, res, next) => {
+        const user = await authenticateAsync(req);
+        if (!user) {
+            throw new UnauthorizedError('Access denied. No token provided');
+        }
+        if (user.is_suspended) {
+            throw new ForbiddenError(`Your account is suspended${user.suspended_reason ? `: ${user.suspended_reason}` : ''}`);
+        }
+        req.user = { id: user.id, role: user.role };
+        next();
+    };
+
+     const optional = async (req, res, next) => {
+        const user = await authenticateAsync(req);
+        if (user && !user.is_suspended) {
+            req.user = { id: user.id, role: user.role };
+        }
+        next();
+    };
+
+    return { required, optional };
+}
+
+module.exports = createAuthMiddleware;

@@ -12,6 +12,47 @@ datasource db {
 enum Role {
   USER
   ADMIN
+  MODERATOR
+}
+
+enum ReportTargetType {
+  POST
+  COMMENT
+  USER
+}
+
+enum ReportReason {
+  SPAM
+  HARASSMENT
+  HATE_SPEECH
+  MISINFORMATION
+  INAPPROPRIATE
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+enum ReportAction {
+  NONE
+  CONTENT_HIDDEN
+  CONTENT_DELETED
+  USER_BANNED
+  USER_SUSPENDED
+}
+
+enum CategoryRequestKind {
+  GLOBAL
+  LOCAL
+}
+
+enum CategoryRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum MemberRole {
@@ -56,12 +97,27 @@ model User {
   reset_token         String?   @db.VarChar(255)
   reset_token_expires DateTime?
 
+  token_version       Int       @default(0)
+
+  is_suspended        Boolean   @default(false)
+  suspended_reason    String?   @db.VarChar(500)
+  suspended_at        DateTime?
+
   owned_communities   Community[]
   memberships         CommunityMember[]
   posts               Post[]
   comments            Comment[]
   post_likes          PostLike[]
   comment_likes       CommentLike[]
+
+  reports_filed       Report[]          @relation("ReportReporter")
+  reports_against     Report[]          @relation("ReportTargetUser")
+  reports_resolved    Report[]          @relation("ReportResolver")
+  bans                CommunityBan[]    @relation("BannedUser")
+  bans_issued         CommunityBan[]    @relation("BanIssuer")
+  category_requests   CategoryRequest[] @relation("CategoryRequester")
+  category_reviews    CategoryRequest[] @relation("CategoryReviewer")
+  moderation_actions  ModerationLog[]
 
   @@map("users")
 }
@@ -102,6 +158,11 @@ model Community {
   categories        CommunityLocalCategory[]
   posts             Post[]
 
+  reports           Report[]
+  bans              CommunityBan[]
+  category_requests CategoryRequest[]
+  moderation_logs   ModerationLog[]
+
   @@map("communities")
 }
 
@@ -124,6 +185,8 @@ model CommunityLocalCategory {
   title       String  @db.VarChar(50)
   description String? @db.Text
 
+  is_default  Boolean @default(false)
+
   community_id Int
   community    Community @relation(fields: [community_id], references: [id], onDelete: Cascade)
 
@@ -140,6 +203,8 @@ model Post {
   publish_date DateTime @default(now())
   status       Status   @default(ACTIVE)
 
+  score        Int      @default(0)
+
   author_id Int
   author    User @relation(fields: [author_id], references: [id], onDelete: Cascade)
 
@@ -150,8 +215,10 @@ model Post {
   categories PostCategory[]
   comments   Comment[]
   likes      PostLike[]
+  reports    Report[]
 
   @@index([publish_date])
+  @@index([score])
   @@map("posts")
 }
 
@@ -182,6 +249,8 @@ model Comment {
   publish_date DateTime @default(now())
   status       Status   @default(ACTIVE)
 
+  score        Int      @default(0)
+
   post_id Int
   post    Post @relation(fields: [post_id], references: [id], onDelete: Cascade)
 
@@ -192,8 +261,9 @@ model Comment {
   parent    Comment?  @relation("CommentReplies", fields: [parent_id], references: [id], onDelete: Cascade)
   replies   Comment[] @relation("CommentReplies")
 
-  media CommentMedia[]
-  likes CommentLike[]
+  media   CommentMedia[]
+  likes   CommentLike[]
+  reports Report[]
 
   @@index([publish_date])
   @@map("comments")
@@ -239,4 +309,100 @@ model CommentLike {
   @@unique([author_id, comment_id])
   @@index([comment_id, type])
   @@map("comment_likes")
+}
+// --- MODERATION ---
+
+model Report {
+  id              Int              @id @default(autoincrement())
+  target_type     ReportTargetType
+  reason          ReportReason
+  details         String?          @db.VarChar(1000)
+  target_excerpt  String?          @db.VarChar(255)
+  status          ReportStatus     @default(OPEN)
+  action_taken    ReportAction?
+  resolution_note String?          @db.VarChar(1000)
+  created_at      DateTime         @default(now())
+  resolved_at     DateTime?
+
+  reporter_id Int
+  reporter    User @relation("ReportReporter", fields: [reporter_id], references: [id], onDelete: Cascade)
+
+  community_id Int?
+  community    Community? @relation(fields: [community_id], references: [id], onDelete: Cascade)
+
+  post_id Int?
+  post    Post? @relation(fields: [post_id], references: [id], onDelete: SetNull)
+
+  comment_id Int?
+  comment    Comment? @relation(fields: [comment_id], references: [id], onDelete: SetNull)
+
+  target_user_id Int?
+  target_user    User? @relation("ReportTargetUser", fields: [target_user_id], references: [id], onDelete: SetNull)
+
+  resolved_by_id Int?
+  resolved_by    User? @relation("ReportResolver", fields: [resolved_by_id], references: [id], onDelete: SetNull)
+
+  @@index([status, created_at])
+  @@index([community_id, status])
+  @@map("reports")
+}
+
+model CommunityBan {
+  community_id Int
+  user_id      Int
+  reason       String?   @db.VarChar(500)
+  created_at   DateTime  @default(now())
+  expires_at   DateTime?
+
+  banned_by_id Int?
+
+  community Community @relation(fields: [community_id], references: [id], onDelete: Cascade)
+  user      User      @relation("BannedUser", fields: [user_id], references: [id], onDelete: Cascade)
+  banned_by User?     @relation("BanIssuer", fields: [banned_by_id], references: [id], onDelete: SetNull)
+
+  @@id([community_id, user_id])
+  @@map("community_bans")
+}
+
+model CategoryRequest {
+  id          Int                   @id @default(autoincrement())
+  kind        CategoryRequestKind
+  title       String                @db.VarChar(50)
+  description String?               @db.Text
+  status      CategoryRequestStatus @default(PENDING)
+  review_note String?               @db.VarChar(1000)
+  created_at  DateTime              @default(now())
+  reviewed_at DateTime?
+
+  requester_id Int
+  requester    User @relation("CategoryRequester", fields: [requester_id], references: [id], onDelete: Cascade)
+
+  community_id Int?
+  community    Community? @relation(fields: [community_id], references: [id], onDelete: Cascade)
+
+  reviewed_by_id Int?
+  reviewed_by    User? @relation("CategoryReviewer", fields: [reviewed_by_id], references: [id], onDelete: SetNull)
+
+  @@index([status, kind])
+  @@index([community_id, status])
+  @@map("category_requests")
+}
+
+model ModerationLog {
+  id          Int      @id @default(autoincrement())
+  action      String   @db.VarChar(50)
+  target_type String?  @db.VarChar(20)
+  target_id   Int?
+  note        String?  @db.VarChar(1000)
+  created_at  DateTime @default(now())
+
+  actor_id Int?
+  actor    User? @relation(fields: [actor_id], references: [id], onDelete: SetNull)
+
+  community_id Int?
+  community    Community? @relation(fields: [community_id], references: [id], onDelete: Cascade)
+
+  @@index([community_id, created_at])
+  @@index([created_at])
+  @@map("moderation_logs")
 }

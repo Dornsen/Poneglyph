@@ -1,13 +1,18 @@
 const express = require('express');
-const { passwordResetLimiter, loginLimiter } = require('../middlewares/rateLimiter');
-const AuthController = require('../controllers/AuthController');
-const authMiddleware = require('../middlewares/authMiddleware');
-const router = express.Router();
 
-router.post('/register', AuthController.createUserAsync);
-router.get('/verify', AuthController.verifyEmailAsync);
-router.post('/reset-password-request', passwordResetLimiter, AuthController.passwordResetRequestAsync);
-router.post('/reset-password', AuthController.passwordResetAsync);
-router.post('/login', loginLimiter, AuthController.loginUserAsync);
+function createAuthRoutes({ authController, auth, limiters }) {
+    const router = express.Router();
 
-module.exports = router;
+    router.post('/register', limiters.registerLimiter, authController.registerUserAsync);
+    router.get('/verify', authController.verifyEmailAsync);
+    router.post('/resend-verification', limiters.passwordResetLimiter, authController.resendVerificationAsync);
+    router.post('/login', limiters.loginLimiter, authController.loginUserAsync);
+    router.post('/logout', auth.required, authController.logoutUserAsync);
+    router.post('/reset-password-request', limiters.passwordResetLimiter, authController.passwordResetRequestAsync);
+    router.post('/reset-password', authController.passwordResetAsync);
+    router.post('/change-password', auth.required, authController.changePasswordAsync);
+
+    return router;
+}
+
+module.exports = createAuthRoutes;
