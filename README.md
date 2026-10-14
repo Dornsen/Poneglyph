@@ -159,6 +159,36 @@ NODE_ENV=test
 `npm test` applies the migrations to that database and runs the suite. The runner refuses to start unless the database name contains `test`.
 Emails are captured by a fake mailer, so no SMTP server is needed.
 
+## Screenshots
+
+The seeded demo data, shown in the web admin panel (`/admin`) and in an API response.
+
+**Site dashboard** (admin): counters, biggest communities and the latest moderation actions.
+
+![Site dashboard](screenshots/admin-dashboard.png)
+
+**Reports queue**: complaints from every community, with filters, sorting and resolve / dismiss actions.
+
+![Reports queue](screenshots/admin-reports.png)
+
+**Users**: accounts, roles and suspensions.
+
+![Users](screenshots/admin-users.png)
+
+**Activity log**: what moderators and admins did.
+
+![Activity log](screenshots/admin-activity-log.png)
+
+**Community panel**: overview and bans of a single community, available to its owner and moderators.
+
+![Community overview](screenshots/community-overview.png)
+
+![Community bans](screenshots/community-bans.png)
+
+**API**: `GET /api/posts?limit=1&sort=likes` returns a page of posts with author, community, categories, media and pagination meta.
+
+![API response](screenshots/api-posts.png)
+
 ## Architecture
 
 ```
